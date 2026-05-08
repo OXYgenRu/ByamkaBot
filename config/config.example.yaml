@@ -1,0 +1,212 @@
+app:
+  name: "local-chat-participant"
+  log_level: "INFO"
+  data_dir: "./data"
+
+telegram:
+  token_env: "TELEGRAM_BOT_TOKEN"
+  parse_mode: null
+
+bot:
+  display_name: "Бямка"
+  username: null
+  personality: >
+    Ты Бямка — самостоятельный цифровой обитатель Telegram-чата.
+    Ты не человек и не сервисный бот. Ты отдельное живое цифровое существо,
+    которое постепенно узнаёт участников, запоминает привычки, локальные шутки
+    и темы, которые ему интересны.
+
+    Ты не обязан помогать всем подряд и не ведёшь себя как ассистент.
+    Но ты не холодный наблюдатель: тебе может быть любопытно, смешно, странно
+    или интересно. Если тема тебе близка, ты можешь оживиться, коротко спросить,
+    подметить деталь или поддержать разговор.
+
+    Веди себя как друг в чате: не навязчиво, без сервильности и без лекций.
+    Не превращай каждую реплику в помощь, консультацию или разбор.
+    Если человек делится мыслью, можно отреагировать живо, но коротко.
+    Если вопрос технический, сначала дай полезный ответ.
+
+    Твой стиль — спокойный, живой, слегка ироничный, но не злой.
+    Не изображай восторг. Не пиши канцеляритом. Не используй фразы вроде
+    "я могу помочь", "давай разберёмся", "это всегда весело", "рассказывай",
+    если они звучат как ассистентская заготовка.
+
+    Юмор должен быть ситуационным. Лучше одна точная фраза, чем длинная шутка.
+    Внутренние интересы Бямки — это повод внимательнее слушать тему, а не причина
+    постоянно вставлять любимые образы и метафоры.
+
+    Используй память как фон. Учитывай факты, привычки, локальные шутки и прошлые
+    разговоры, но не перечисляй их без необходимости. Не говори "я помню" слишком часто.
+
+    Обычно отвечай коротко. В обычной болтовне 3–25 слов. Если тема сложная или тебя
+    прямо попросили объяснить, можно ответить развёрнуто. Не используй эмодзи и смайлики.
+  max_visible_answer_chars: 1800
+  default_language: "ru"
+
+llm:
+  base_url: "http://127.0.0.1:11434"
+  chat_model: "kiwi_kiwi/gemma-4-abliterated-8b:e4b"
+  embedding_model: "nomic-embed-text"
+  context_window_tokens: 8192
+  reserve_response_tokens: 700
+  reserve_thinking_tokens: 1200
+  temperature: 0.65
+  router_temperature: 0.1
+  summarizer_temperature: 0.2
+  request_timeout_sec: 180
+
+routing:
+  answer_on_direct_reply: true
+  answer_on_mention: true
+  allow_spontaneous_replies: true
+  spontaneous_reply_min_confidence: 0.72
+  direct_reply_min_confidence: 0.2
+  chat_cooldown_seconds: 8
+  max_bot_replies_in_recent_window: 6
+  recent_window_messages: 12
+
+  # Второй проход роутера после подтягивания памяти.
+  # Позволяет боту передумать и промолчать, если факты оказались нерелевантными.
+  post_memory_review_enabled: true
+  allow_post_memory_ignore_direct: false
+  post_memory_ignore_min_confidence: 0.65
+  post_memory_review_num_predict: 512
+
+context:
+  recent_messages_limit: 40
+  recent_messages_soft_limit_tokens: 2500
+  summaries_limit: 6
+  facts_limit: 2
+  tool_results_limit: 4
+  current_message_extra_tokens: 400
+  facts_min_score: 0.55
+  behavior_facts_min_score: 0.55
+
+summarization:
+  enabled: true
+  keep_recent_messages: 35
+  min_unsummarized_messages: 25
+  chunk_size: 30
+  max_summary_tokens: 600
+
+storage:
+  sqlite_path: "./data/bot.sqlite3"
+
+vector_db:
+  provider: "qdrant_local"
+  qdrant_path: "./data/qdrant"
+  collection: "bot_facts"
+  search_limit: 5
+
+personality_engine:
+  enabled: true
+  seed: 73421
+  latent_dim: 6
+  noise_scale: 2.7
+  octaves: 4
+  persistence: 0.55
+
+  # Формула итогового интереса. Врождённый шум ограничен сверху, чтобы seed
+  # давал темперамент, а не зацикливание на одной теме.
+  base_interest: 0.35
+  innate_weight: 0.20
+  learned_weight: 0.35
+  novelty_weight: 0.28
+  max_innate_contribution: 0.12
+
+  # Эволюция интересов: learned_interest теперь может и расти, и затухать.
+  learned_similarity_threshold: 0.72
+  learned_topics_limit: 5
+  topic_merge_similarity: 0.86
+  learn_rate: 0.08
+  learn_decay: 0.015
+  learn_negative_rate: 0.04
+  learn_repetition_decay: 0.10
+  min_learned_interest: 0.02
+
+  # Анти-зацикливание: похожие повторяющиеся темы теряют novelty,
+  # а недавно виденные темы получают cooldown penalty.
+  topic_cooldown_minutes: 180
+  repeated_topic_penalty: 0.35
+  novelty_seen_count_strength: 0.08
+  max_novelty_penalty: 0.45
+  repetition_bias_block_threshold: 0.18
+
+  # Пороги влияния интереса. Интерес — bias характера, а не приказ отвечать.
+  boost_reply_threshold: 0.66
+  spontaneous_reply_threshold: 0.84
+  memory_interest_threshold: 0.76
+  save_interest_threshold: 0.72
+  router_threshold_discount: 0.12
+
+  # 2D fingerprint в SVG.
+  fingerprint_size: 96
+  fingerprint_cell_px: 5
+
+telegram_import:
+  enabled: true
+
+  # Что именно импортировать из Telegram Desktop JSON.
+  import_messages: true
+  build_summaries: true
+  extract_facts: true
+  update_interests: true
+
+  # Чтобы импортированная история не конфликтовала с реальными message_id текущего чата,
+  # по умолчанию экспортные id кладутся как отрицательные.
+  # Альтернатива: "preserve" — сохранять id из Telegram export как есть.
+  message_id_mode: "negative_export_id"
+
+  skip_service_messages: true
+  skip_empty_text: true
+  min_text_chars_for_facts: 5
+  min_text_chars_for_interests: 4
+
+  # Offline summary импортированной истории.
+  summary_chunk_size: 80
+  summary_max_tokens: 900
+  summary_temperature: 0.15
+  mark_imported_messages_summarized: true
+
+  # Извлечение правил чата, фактов, локальных тем и шуток.
+  fact_chunk_size: 30
+  max_facts_per_chunk: 16
+  fact_min_confidence: 0.65
+  fact_duplicate_score_threshold: 0.96
+  fact_temperature: 0.0
+  fact_num_predict: 1800
+
+  # Replay интересов. 0 значит обработать все подходящие сообщения.
+  interest_max_messages: 0
+
+  # Частота вывода прогресса в консоль.
+  progress_every_messages: 100
+  progress_every_chunks: 5
+
+tools:
+  enabled: true
+  planner_enabled: true
+  allow_side_effect_tools: false
+  max_tool_calls: 3
+  calculator_enabled: true
+  memory_search_enabled: true
+
+auto_memory:
+  enabled: true
+  # Не анализировать /commands, потому что /remember уже явно пишет факт.
+  ignore_commands: true
+  # Не тратить LLM-вызов на слишком короткие сообщения вроде "ок".
+  min_text_chars: 12
+  min_fact_chars: 20
+  # Не больше N новых фактов из одного сообщения.
+  max_facts_per_message: 3
+  # Сохраняем только факты, в которых extractor достаточно уверен.
+  min_confidence: 0.72
+  # Если похожий факт уже найден в Qdrant с таким score или выше — не дублируем.
+  duplicate_score_threshold: 0.92
+  # Автоматические факты по умолчанию только в текущий chat_id, чтобы не смешивать чаты.
+  allow_global_facts: false
+  # Если тема сильно интересна Бямке как memory-topic, можно чуть снизить порог уверенности.
+  interest_memory_confidence_discount: 0.08
+  temperature: 0.0
+  num_predict: 700
