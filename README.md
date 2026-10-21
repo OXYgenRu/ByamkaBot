@@ -189,10 +189,7 @@ flowchart LR
   Python 3.12.
 - Запущенная [Ollama](https://ollama.com/) с доступом к `/api/chat` и
   embeddings API.
-- Достаточно оперативной памяти и, при использовании GPU, видеопамяти для
-  выбранной модели и контекстного окна.
-- Токен Telegram-бота. Создать бота можно
-  через [BotFather](https://t.me/BotFather).
+- Токен Telegram-бота.
 
 Отдельный сервер Qdrant не нужен: используется встроенный локальный режим.
 Бот получает сообщения через long polling; публичный HTTP-сервер и webhook для
@@ -241,8 +238,6 @@ cp .env.example .env
 cp config/config.example.yaml config/config.yaml
 ```
 
-Эти команды предназначены для первой установки; не перезаписывай ими уже
-настроенные файлы.
 В `.env` заполни переменную `TELEGRAM_BOT_TOKEN` токеном от BotFather.
 В `config/config.yaml` задай модели и нужное поведение.
 Публичный `config/config.example.yaml` содержит полный набор полей с
