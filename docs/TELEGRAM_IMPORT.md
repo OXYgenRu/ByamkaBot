@@ -7,8 +7,8 @@ Telegram Desktop умеет экспортировать историю в JSON.
 ```bash
 python scripts/import_telegram_export.py \
   --json data/telegram_export/result.json \
-  --target-chat-id 1984380070 \
-  --config config/config.example.yaml
+  --target-chat-id 123456789 \
+  --config config/config.yaml
 ```
 
 `--target-chat-id` — это чат, на который должна повлиять история. Например, если ты хочешь, чтобы история повлияла на личный диалог с ботом, укажи id личного диалога. Если на группу — id группы.
@@ -21,7 +21,7 @@ python scripts/import_telegram_export.py \
 python scripts/import_telegram_export.py \
   --json data/telegram_export/result.json \
   --source-chat-name "Название чата" \
-  --target-chat-id 1984380070
+  --target-chat-id 123456789
 ```
 
 или точнее:
@@ -30,7 +30,7 @@ python scripts/import_telegram_export.py \
 python scripts/import_telegram_export.py \
   --json data/telegram_export/result.json \
   --source-chat-id 123456789 \
-  --target-chat-id 1984380070
+  --target-chat-id 123456789
 ```
 
 ## Dry-run
@@ -40,7 +40,7 @@ python scripts/import_telegram_export.py \
 ```bash
 python scripts/import_telegram_export.py \
   --json data/telegram_export/result.json \
-  --target-chat-id 1984380070 \
+  --target-chat-id 123456789 \
   --dry-run \
   --no-summaries \
   --no-facts \
@@ -162,7 +162,7 @@ telegram_import:
 ```bash
 python scripts/import_telegram_export.py \
   --json result.json \
-  --target-chat-id 1984380070 \
+  --target-chat-id 123456789 \
   --no-summaries \
   --no-facts \
   --no-interests

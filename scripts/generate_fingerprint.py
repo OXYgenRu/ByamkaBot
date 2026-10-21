@@ -12,7 +12,7 @@ from bot_app.storage.sqlite_store import SQLiteStore
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config/config.example.yaml")
+    parser.add_argument("--config", default="config/config.yaml")
     parser.add_argument("--output", default="data/interest_fingerprint.svg")
     args = parser.parse_args()
 

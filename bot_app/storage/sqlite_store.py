@@ -62,6 +62,15 @@ class SQLiteStore:
             CREATE INDEX IF NOT EXISTS idx_messages_chat_unsummarized
             ON messages(chat_id, is_summarized, id);
 
+            CREATE TABLE IF NOT EXISTS message_images (
+                chat_id INTEGER NOT NULL,
+                telegram_message_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                description TEXT,
+                PRIMARY KEY(chat_id, telegram_message_id, path)
+            );
+            CREATE INDEX IF NOT EXISTS idx_message_images_path ON message_images(path);
+
             CREATE TABLE IF NOT EXISTS chat_summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER NOT NULL,
@@ -155,13 +164,49 @@ class SQLiteStore:
                 1 if event.is_bot_message else 0,
             ),
         )
-        await self.db.commit()
         inserted = cursor.rowcount > 0
+        if inserted:
+            for path in event.image_paths:
+                await self.db.execute(
+                    "INSERT OR IGNORE INTO message_images(chat_id,telegram_message_id,path,description) "
+                    "VALUES (?,?,?,(SELECT description FROM message_images WHERE path=? AND description IS NOT NULL LIMIT 1))",
+                    (event.chat_id, event.telegram_message_id, path, path))
+        await self.db.commit()
         row = await self.db.execute_fetchall(
             "SELECT id FROM messages WHERE chat_id=? AND telegram_message_id=?",
             (event.chat_id, event.telegram_message_id),
         )
         return int(row[0]["id"]), inserted
+
+    async def get_message_images(self, chat_id: int, message_id: int) -> list[dict[str, Any]]:
+        rows = await self.db.execute_fetchall(
+            "SELECT path,description FROM message_images WHERE chat_id=? AND telegram_message_id=? ORDER BY rowid",
+            (chat_id, message_id))
+        return [dict(r) for r in rows]
+
+    async def get_image_description(self, path: str) -> str | None:
+        rows = await self.db.execute_fetchall(
+            "SELECT description FROM message_images WHERE path=? AND description IS NOT NULL LIMIT 1", (path,))
+        return str(rows[0]["description"]) if rows else None
+
+    async def save_image_description(self, path: str, description: str) -> None:
+        await self.db.execute("UPDATE message_images SET description=? WHERE path=?", (description, path))
+        await self.db.commit()
+
+    async def _with_images(self, rows) -> list[dict[str, Any]]:
+        result = [dict(r) for r in rows]
+        if not result:
+            return result
+        # Fetch metadata in one query rather than a query for every history message.
+        images = await self.db.execute_fetchall(
+            "SELECT telegram_message_id,path,description FROM message_images WHERE chat_id=? ORDER BY rowid",
+            (result[0]["chat_id"],))
+        by_message = {}
+        for image in images:
+            by_message.setdefault(image["telegram_message_id"], []).append(dict(image))
+        for row in result:
+            row["images"] = by_message.get(row["telegram_message_id"], [])
+        return result
 
     async def get_recent_messages(self, chat_id: int, limit: int) -> list[dict[str, Any]]:
         rows = await self.db.execute_fetchall(
@@ -173,7 +218,26 @@ class SQLiteStore:
             """,
             (chat_id, limit),
         )
-        return [dict(r) for r in reversed(rows)]
+        return await self._with_images(reversed(rows))
+
+    async def get_messages_for_reply(self, chat_id: int, target_id: int, limit: int | None, *, active_only: bool = False) -> list[dict[str, Any]]:
+        # A delayed request must not see newer human questions. Answers delivered
+        # while it waited are useful only when they belong to earlier requests.
+        rows = await self.db.execute_fetchall(
+            """
+            SELECT * FROM messages
+            WHERE chat_id=? AND (?=0 OR is_summarized=0) AND (
+                (is_bot=0 AND telegram_message_id <= ?) OR
+                (is_bot=1 AND (
+                    reply_to_message_id < ? OR
+                    (reply_to_message_id IS NULL AND telegram_message_id < ?)
+                ))
+            )
+            ORDER BY id DESC LIMIT ?
+            """,
+            (chat_id, int(active_only), target_id, target_id, target_id, -1 if limit is None else limit),
+        )
+        return await self._with_images(reversed(rows))
 
     async def get_recent_bot_message_count(self, chat_id: int, window: int) -> int:
         rows = await self.db.execute_fetchall(
@@ -200,6 +264,33 @@ class SQLiteStore:
             (chat_id,),
         )
         return str(rows[0]["created_at"]) if rows else None
+
+    async def get_active_history(self, chat_id: int) -> list[dict[str, Any]]:
+        rows = await self.db.execute_fetchall(
+            "SELECT * FROM messages WHERE chat_id=? AND is_summarized=0 ORDER BY id", (chat_id,))
+        return await self._with_images(rows)
+
+    async def commit_compaction(self, chat_id: int, message_ids: list[int], summary: str) -> None:
+        if not message_ids:
+            return
+        # A dedicated short transaction cannot be committed midway by another task
+        # using the shared ingestion connection. Never hold it while calling the LLM.
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                for mid in message_ids:
+                    cursor = await db.execute(
+                        "UPDATE messages SET is_summarized=1 WHERE id=? AND chat_id=? AND is_summarized=0",
+                        (mid, chat_id))
+                    if cursor.rowcount != 1:
+                        raise RuntimeError("Compaction source changed; refusing duplicate summary")
+                await db.execute(
+                    "INSERT INTO chat_summaries(chat_id,start_message_id,end_message_id,summary_text,created_at) VALUES (?,?,?,?,?)",
+                    (chat_id, message_ids[0], message_ids[-1], summary, utcnow_iso()))
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def get_unsummarized_old_messages(
         self,
@@ -260,15 +351,19 @@ class SQLiteStore:
         await self.db.commit()
         return int(cursor.lastrowid)
 
-    async def get_recent_summaries(self, chat_id: int, limit: int) -> list[str]:
+    async def get_recent_summaries(
+        self, chat_id: int, limit: int, *, before_telegram_id: int | None = None,
+    ) -> list[str]:
         rows = await self.db.execute_fetchall(
             """
             SELECT summary_text FROM chat_summaries
-            WHERE chat_id=?
+            WHERE chat_id=? AND (? IS NULL OR end_message_id < (
+                SELECT id FROM messages WHERE chat_id=? AND telegram_message_id=?
+            ))
             ORDER BY id DESC
             LIMIT ?
             """,
-            (chat_id, limit),
+            (chat_id, before_telegram_id, chat_id, before_telegram_id, limit),
         )
         return [str(r["summary_text"]) for r in reversed(rows)]
 

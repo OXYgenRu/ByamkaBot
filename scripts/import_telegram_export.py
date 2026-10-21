@@ -16,7 +16,7 @@ from bot_app.logging_setup import setup_logging
 from bot_app.personality.interest_engine import PersonalityInterestEngine
 from bot_app.storage.sqlite_store import SQLiteStore
 
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.example.yaml"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
 
 def parse_args() -> argparse.Namespace:

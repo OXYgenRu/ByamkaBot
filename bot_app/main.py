@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
@@ -24,6 +25,7 @@ from bot_app.logging_setup import setup_logging
 from bot_app.memory.auto_extractor import AutoMemoryExtractor
 from bot_app.memory.qdrant_memory import QdrantMemory
 from bot_app.memory.summarizer import ChatSummarizer
+from bot_app.memory.images import ImageMemory, ImageFiles, LimitedBuffer
 from bot_app.personality.interest_engine import PersonalityInterestEngine
 from bot_app.storage.sqlite_store import SQLiteStore
 from bot_app.tools.planner import ToolPlanner
@@ -31,7 +33,7 @@ from bot_app.tools.registry import build_default_tool_registry
 
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.example.yaml"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,6 +85,7 @@ async def build_orchestrator(config_path: str) -> tuple[BotOrchestrator, Bot, Ol
         responder=responder,
         memory_extractor=memory_extractor,
         interest_engine=interest_engine,
+        image_memory=ImageMemory(config, storage, llm),
     )
     if config.telegram.parse_mode:
         bot = Bot(
@@ -97,8 +100,37 @@ async def build_orchestrator(config_path: str) -> tuple[BotOrchestrator, Bot, Ol
     return orchestrator, bot, llm, storage
 
 
-def normalize_message(message: Message, bot_username: str | None) -> MessageEvent | None:
+def image_file(message: Message):
+    if message.photo:
+        return message.photo[-1]
+    document = message.document
+    if document and (document.mime_type or "").lower() in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+        return document
+    return None
+
+
+async def prepare_image_message(message: Message, event: MessageEvent, bot: Bot, config) -> MessageEvent:
+    attachment = image_file(message)
+    if attachment is None:
+        return event
+    if not config.vision.enabled:
+        return replace(event, text=event.text + "\n[Просмотр изображений отключён.]")
+    try:
+        if (attachment.file_size or 0) > config.vision.max_download_bytes:
+            raise ValueError("Image exceeds download size limit")
+        stream = LimitedBuffer(config.vision.max_download_bytes)
+        await bot.download(attachment.file_id, destination=stream)
+        name = ImageFiles(config).save(stream.getvalue())
+        return replace(event, image_paths=(name,))
+    except Exception:
+        logger.exception("Could not download/decode image chat=%s message=%s", event.chat_id, event.telegram_message_id)
+        return replace(event, text=event.text + "\n[Изображение не удалось загрузить или прочитать; его содержимое недоступно.]")
+
+
+def normalize_message(message: Message, bot_username: str | None, bot_id: int | None = None) -> MessageEvent | None:
     text = message.text or message.caption or ""
+    if not text.strip() and image_file(message) is not None:
+        text = "[Изображение]"
     if not text.strip():
         return None
     user = message.from_user
@@ -111,7 +143,7 @@ def normalize_message(message: Message, bot_username: str | None) -> MessageEven
     reply_to_bot = bool(
         message.reply_to_message
         and message.reply_to_message.from_user
-        and message.reply_to_message.from_user.is_bot
+        and message.reply_to_message.from_user.id == bot_id
     )
     return MessageEvent(
         rquid=str(uuid.uuid4()),
@@ -140,7 +172,7 @@ async def main() -> None:
 
     @dp.message(Command("remember"))
     async def remember(message: Message) -> None:
-        event = normalize_message(message, orchestrator.config.bot.username)
+        event = normalize_message(message, orchestrator.config.bot.username, bot.id)
         if event:
             await orchestrator.storage.save_message(event)
         fact = (message.text or "").split(maxsplit=1)
@@ -190,15 +222,18 @@ async def main() -> None:
         text = "\n".join(f"- {r.text} ({r.score:.3f})" for r in results)
         await message.answer(text[:3500])
 
-    @dp.message(F.text | F.caption)
+    @dp.message(F.text | F.caption | F.photo | F.document)
     async def handle_text(message: Message) -> None:
-        event = normalize_message(message, orchestrator.config.bot.username)
+        event = normalize_message(message, orchestrator.config.bot.username, bot.id)
         if event is None:
             return
         try:
-            answer = await orchestrator.handle_message(event)
-            if answer:
-                await message.answer(answer)
+            event = await prepare_image_message(message, event, bot, orchestrator.config)
+            async def send_answer(answer: str) -> int:
+                sent = await message.reply(answer)
+                return sent.message_id
+
+            await orchestrator.handle_message(event, send_answer=send_answer)
         except Exception:
             logger.exception("Failed to handle message")
             # В группе лучше не шуметь технической ошибкой. Но для прямых упоминаний можно коротко сказать.
@@ -208,6 +243,8 @@ async def main() -> None:
     try:
         await dp.start_polling(bot)
     finally:
+        await orchestrator.close()
+        orchestrator.memory.client.close()
         await llm.close()
         await storage.close()
         await bot.session.close()

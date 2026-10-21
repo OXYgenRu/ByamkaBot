@@ -26,9 +26,35 @@ class TelegramConfig:
 class BotConfig:
     display_name: str = "Локальный бот"
     username: str | None = None
-    personality: str = "Ты участник Telegram-чата. Отвечай естественно и коротко."
+    identity_aliases: list[str] = field(default_factory=list)
+    personality: str = "Я участник Telegram-чата. Отвечаю естественно и коротко."
+    dialogue_examples: list[list[dict[str, str]]] = field(default_factory=list)
+    dialogue_examples_file: str | None = None
     max_visible_answer_chars: int = 1800
     default_language: str = "ru"
+
+    @property
+    def identity_prompt(self) -> str:
+        username = f" Мой username — @{self.username}." if self.username else ""
+        aliases = " Меня также называют: " + ", ".join(self.identity_aliases) + "." if self.identity_aliases else ""
+        return (
+            f"Я — {self.display_name}, участник этого Telegram-чата.{username}{aliases} "
+            "В истории текущего чата BOT и сообщения assistant обозначают мои ответы. "
+            "Упоминания меня в третьем лице связываю с собой по контексту, "
+            "но не считаю любое «он» обращением ко мне. "
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dialogue_examples, list):
+            raise ValueError("bot.dialogue_examples must be a list of conversations")
+        for dialogue in self.dialogue_examples:
+            if not isinstance(dialogue, list) or not dialogue or len(dialogue) % 2:
+                raise ValueError("Each dialogue example must contain complete user/assistant pairs")
+            for index, message in enumerate(dialogue):
+                role = "user" if index % 2 == 0 else "assistant"
+                if (not isinstance(message, dict) or message.get("role") != role
+                        or not isinstance(message.get("content"), str) or not message["content"].strip()):
+                    raise ValueError("Dialogue examples require alternating user/assistant roles and nonempty content")
 
 
 @dataclass
@@ -36,6 +62,9 @@ class LLMConfig:
     base_url: str = "http://127.0.0.1:11434"
     chat_model: str = "deepseek-r1:8b"
     embedding_model: str = "nomic-embed-text"
+    thinking: bool = True
+    num_batch: int = 1024
+    keep_alive: str = "3h"
     context_window_tokens: int = 8192
     reserve_response_tokens: int = 700
     reserve_thinking_tokens: int = 1200
@@ -46,7 +75,24 @@ class LLMConfig:
 
 
 @dataclass
+class VisionConfig:
+    enabled: bool = True
+    max_download_bytes: int = 10 * 1024 * 1024
+    max_pixels: int = 25_000_000
+    max_side: int = 1024
+    max_images_per_request: int = 1
+    reserve_image_tokens: int = 4096
+    description_tokens: int = 512
+
+    def __post_init__(self) -> None:
+        if min(self.max_download_bytes, self.max_pixels, self.max_side,
+               self.max_images_per_request, self.reserve_image_tokens, self.description_tokens) <= 0:
+            raise ValueError("Vision limits must be positive")
+
+
+@dataclass
 class RoutingConfig:
+    message_debounce_seconds: float = 1.0
     answer_on_direct_reply: bool = True
     answer_on_mention: bool = True
     allow_spontaneous_replies: bool = True
@@ -55,6 +101,8 @@ class RoutingConfig:
     chat_cooldown_seconds: int = 12
     max_bot_replies_in_recent_window: int = 3
     recent_window_messages: int = 12
+    followup_window_seconds: int = 180
+    dialogue_reply_min_confidence: float = 0.5
 
     # Second routing pass after memory/facts are retrieved.
     post_memory_review_enabled: bool = True
@@ -65,6 +113,12 @@ class RoutingConfig:
 
 @dataclass
 class ContextConfig:
+    history_max_tokens: int = 14000
+    history_compact_ratio: float = 0.90
+    history_keep_ratio: float = 0.50
+    router_history_tokens: int = 2500
+    prompt_safety_tokens: int = 1024
+    examples_max_tokens: int = 1200
     recent_messages_limit: int = 40
     recent_messages_soft_limit_tokens: int = 2500
     summaries_limit: int = 6
@@ -73,6 +127,13 @@ class ContextConfig:
     current_message_extra_tokens: int = 400
     facts_min_score: float = 0.55
     behavior_facts_min_score: float = 0.55
+
+    def __post_init__(self) -> None:
+        if not 0 < self.history_keep_ratio < self.history_compact_ratio < 1:
+            raise ValueError("History thresholds must satisfy 0 < keep < compact < 1")
+        if min(self.history_max_tokens, self.router_history_tokens, self.prompt_safety_tokens) <= 0:
+            raise ValueError("History and safety token budgets must be positive")
+
 
 @dataclass
 class SummarizationConfig:
@@ -207,6 +268,7 @@ class Config:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     bot: BotConfig = field(default_factory=BotConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     summarization: SummarizationConfig = field(default_factory=SummarizationConfig)
@@ -250,11 +312,23 @@ def load_config(path: str | Path) -> Config:
         raise FileNotFoundError(path)
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    bot_options = dict(_section(raw, "bot"))
+    if bot_options.get("dialogue_examples_file"):
+        if bot_options.get("dialogue_examples"):
+            raise ValueError("Use either bot.dialogue_examples or bot.dialogue_examples_file")
+        examples_path = path.resolve().parent / bot_options["dialogue_examples_file"]
+        examples_data = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+        if not isinstance(examples_data, dict) or not isinstance(examples_data.get("dialogues"), list):
+            raise ValueError("Dialogue examples file must contain a dialogues list")
+        if examples_data.get("speaker") != bot_options.get("display_name", BotConfig.display_name):
+            raise ValueError("Dialogue examples speaker must match bot.display_name")
+        bot_options["dialogue_examples"] = examples_data["dialogues"]
     cfg = Config(
         app=AppConfig(**_section(raw, "app")),
         telegram=TelegramConfig(**_section(raw, "telegram")),
-        bot=BotConfig(**_section(raw, "bot")),
+        bot=BotConfig(**bot_options),
         llm=LLMConfig(**_section(raw, "llm")),
+        vision=VisionConfig(**_section(raw, "vision")),
         routing=RoutingConfig(**_section(raw, "routing")),
         context=ContextConfig(**_section(raw, "context")),
         summarization=SummarizationConfig(**_section(raw, "summarization")),

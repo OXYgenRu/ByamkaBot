@@ -22,6 +22,8 @@ class MessageEvent:
     reply_to_bot: bool = False
     mentioned_bot: bool = False
     is_bot_message: bool = False
+    dialogue_continuation: bool = False
+    image_paths: tuple[str, ...] = ()
 
     @property
     def author_label(self) -> str:

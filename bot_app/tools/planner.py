@@ -47,9 +47,9 @@ class ToolPlanner:
             return []
 
         prompt = (
-            "Выбери инструменты, которые реально нужны для ответа.\n"
-            "Если инструменты не нужны, верни пустой массив tool_calls.\n"
-            "Не вызывай инструменты просто из любопытства.\n\n"
+            "Выбираю инструменты, которые реально нужны для моего ответа.\n"
+            "Если инструменты не нужны, возвращаю пустой массив tool_calls.\n"
+            "Не вызываю инструменты просто из любопытства.\n\n"
             f"Доступные инструменты:\n{json.dumps(specs, ensure_ascii=False, indent=2)}\n\n"
             f"Недавний контекст:\n{recent_messages_text}\n\n"
             f"Текущее сообщение:\n{event.author_label}: {event.text}"
@@ -57,12 +57,13 @@ class ToolPlanner:
         try:
             data = await self.llm.structured_json(
                 [
-                    {"role": "system", "content": "Ты планировщик безопасных инструментов. Отвечай строго JSON."},
+                    {"role": "system", "content": self.config.bot.identity_prompt + "Планирую использование безопасных инструментов. Отвечаю строго JSON."},
                     {"role": "user", "content": prompt},
                 ],
                 TOOL_PLAN_SCHEMA,
                 temperature=0.1,
                 num_predict=768,
+                purpose="tools.plan",
             )
         except Exception:
             logger.exception("Tool planner failed rquid=%s", event.rquid)

@@ -33,7 +33,7 @@ class PersonalityInterestEngine:
     async def ensure_ready(self) -> None:
         if self._field is not None:
             return
-        probe = await self.llm.embed("interest field probe")
+        probe = await self.llm.embed("interest field probe", purpose="startup.interest_dimension")
         if not probe:
             raise RuntimeError("Embedding vector is empty; cannot initialize interest engine")
         cfg = self.config.personality_engine
@@ -66,7 +66,7 @@ class PersonalityInterestEngine:
             return None
 
         await self.ensure_ready()
-        embedding = await self.llm.embed(event.text)
+        embedding = await self.llm.embed(event.text, purpose="interest.evaluate")
         similar_topics = await self.storage.find_similar_interest_topics(
             chat_id=event.chat_id,
             embedding=embedding,

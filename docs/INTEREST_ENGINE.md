@@ -121,7 +121,7 @@ Fingerprint — это 2D SVG-карта seeded noise-полей. Она не в
 CLI:
 
 ```bash
-python scripts/generate_fingerprint.py --config config/config.example.yaml --output data/interest_fingerprint.svg
+python scripts/generate_fingerprint.py --config config/config.yaml --output data/interest_fingerprint.svg
 ```
 
 Telegram:

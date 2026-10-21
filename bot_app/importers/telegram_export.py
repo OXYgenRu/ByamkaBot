@@ -297,23 +297,24 @@ class TelegramExportImporter:
         for idx, chunk in enumerate(chunks, start=1):
             text = self._format_messages([m.event for m in chunk], max_text_chars=1200)
             prompt = (
-                "Сожми фрагмент импортированной истории Telegram-чата для памяти бота.\n"
+                "Сжимаю фрагмент импортированной истории Telegram-чата для своей памяти.\n"
                 "Нужно сохранить не хронологию, а полезный слой памяти:\n"
                 "- кто с кем общается и какой стиль у чата;\n"
                 "- важные факты, решения и договорённости;\n"
                 "- локальные темы, шутки и повторяющиеся паттерны;\n"
-                "- правила поведения, которые будущий бот должен учитывать.\n"
-                "Не добавляй того, чего нет в сообщениях. Пиши компактно.\n\n"
+                "- правила поведения, которые мне нужно учитывать в будущих разговорах.\n"
+                "Не добавляю того, чего нет в сообщениях. Пишу компактно.\n\n"
                 f"Фрагмент:\n{text}"
             )
             try:
                 raw = await self.llm.chat(
                     [
-                        {"role": "system", "content": "Ты делаешь offline-summary истории чата для памяти Telegram-бота."},
+                        {"role": "system", "content": self.config.bot.identity_prompt + "Делаю offline-summary истории чата для своей памяти. Сохраняю имена авторов фактов и не приписываю себе чужой опыт."},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=cfg.summary_temperature,
                     num_predict=cfg.summary_max_tokens,
+                    purpose="import.summarize",
                 )
                 summary = self.llm.clean_visible_answer(raw)
                 if not summary:
@@ -376,11 +377,11 @@ class TelegramExportImporter:
         cfg = self.config.telegram_import
         text = self._format_messages(events, max_text_chars=900)
         system = (
-            "Ты offline-модуль извлечения памяти из истории Telegram-чата. "
-            "Верни строгий JSON по схеме. Извлекай только устойчивые знания, которые должны повлиять "
-            "на будущего бота в этом чате. Особенно важны chat_rule, running_joke, local_topic, "
+            self.config.bot.identity_prompt + "Извлекаю память из импортированной истории Telegram-чата. Сохраняю имена участников, к которым относятся факты. "
+            "Возвращаю строгий JSON по схеме. Извлекаю только устойчивые знания, которые должны повлиять "
+            "на мои будущие ответы в этом чате. Особенно важны chat_rule, running_joke, local_topic, "
             "participant_preference, project_fact, decision и social_pattern. "
-            "Не сохраняй одноразовые реплики, случайные эмоции, секреты, токены, пароли, номера карт, "
+            "Не сохраняю одноразовые реплики, случайные эмоции, секреты, токены, пароли, номера карт, "
             "адреса проживания и чувствительные данные. "
             "Факты должны быть самодостаточными и без ссылок на 'это сообщение'."
         )
@@ -388,8 +389,8 @@ class TelegramExportImporter:
             f"Максимум фактов из чанка: {cfg.max_facts_per_chunk}.\n"
             "Хорошие примеры:\n"
             "- В этом чате не любят длинные ассистентские ответы.\n"
-            "- Локальная шутка чата: docker-compose называют квест-комнатой.\n"
-            "- Егор часто экспериментирует с промптами.\n"
+            "- В чате принято обсуждать новые версии проекта по пятницам.\n"
+            "- Участник предпочитает примеры кода на Python.\n"
             "- В проекте бота используется Ollama и локальная LLM.\n\n"
             f"Сообщения:\n{text}"
         )
@@ -402,6 +403,7 @@ class TelegramExportImporter:
                 IMPORT_FACT_SCHEMA,
                 temperature=cfg.fact_temperature,
                 num_predict=cfg.fact_num_predict,
+                purpose="import.extract_facts",
             )
         except Exception:
             logger.exception("telegram import fact extraction failed")

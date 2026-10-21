@@ -1,21 +1,17 @@
-[tool.mypy]
-python_version = "3.12"
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-# База: строгий режим (включает много полезных проверок)
-strict = true  # список флагов в strict меняется по версиям, см. docs :contentReference[oaicite:2]{index=2}
+[project]
+name = "byamka"
+version = "0.1.0"
+description = "Local LLM Telegram chat bot powered by Ollama"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
 
-# Полезно добавить отдельно (не входит в strict)
-warn_unreachable = true  # strict не включает warn_unreachable :contentReference[oaicite:3]{index=3}
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
-# Чтобы сообщения были читабельнее
-show_error_codes = true
-pretty = true
-
-# --- Запрет Any (главное) ---
-disallow_any_expr = true        # запрещает выражения типа Any :contentReference[oaicite:4]{index=4}
-disallow_any_explicit = true    # запрещает явный Any в аннотациях/дженериках :contentReference[oaicite:5]{index=5}
-disallow_any_decorated = true   # запрещает Any в сигнатуре после декораторов :contentReference[oaicite:6]{index=6}
-disallow_any_unimported = true  # запрещает Any из "unfollowed imports" :contentReference[oaicite:7]{index=7}
-
-# Явно фиксируем, что "implicit optional" нам не нужен
-implicit_optional = false  # по сути: не разрешаем def f(x: int = None) :contentReference[oaicite:8]{index=8}
+[tool.setuptools.packages.find]
+include = ["bot_app*"]

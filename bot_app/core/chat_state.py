@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from bot_app.domain.events import MessageEvent
+from bot_app.llm.history_window import message_text
 from bot_app.personality.interest_field import InterestProfile
 from bot_app.storage.sqlite_store import SQLiteStore
 
@@ -21,7 +22,7 @@ class ChatState:
             author = msg.get("username") or msg.get("full_name") or f"user:{msg.get('user_id')}"
             if msg.get("is_bot"):
                 author = "BOT"
-            lines.append(f"{author}: {msg.get('text')}")
+            lines.append(f"[id={msg.get('telegram_message_id')} at={msg.get('created_at')} reply_to={msg.get('reply_to_message_id')}] {author}: {message_text(msg)}")
         return "\n".join(lines)
 
     def format_interest_profile(self) -> str:
@@ -41,10 +42,13 @@ class ChatStateBuilder:
         recent_limit: int,
         recent_window: int,
         interest_profile: InterestProfile | None = None,
+        recent_messages: list[dict] | None = None,
     ) -> ChatState:
-        recent_messages = await self.storage.get_recent_messages(event.chat_id, recent_limit)
-        recent_bot_count = await self.storage.get_recent_bot_message_count(event.chat_id, recent_window)
-        last_bot_at = await self.storage.get_last_bot_message_created_at(event.chat_id)
+        if recent_messages is None:
+            recent_messages = await self.storage.get_messages_for_reply(
+                event.chat_id, event.telegram_message_id, max(recent_limit, recent_window))
+        recent_bot_count = sum(bool(row.get("is_bot")) for row in recent_messages[-recent_window:])
+        last_bot_at = next((row["created_at"] for row in reversed(recent_messages) if row.get("is_bot")), None)
         return ChatState(
             event=event,
             recent_messages=recent_messages,

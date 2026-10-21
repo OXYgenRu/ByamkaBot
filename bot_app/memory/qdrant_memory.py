@@ -45,7 +45,7 @@ class QdrantMemory:
     async def ensure_collection(self) -> None:
         if self._collection_exists():
             return
-        probe = await self.llm.embed("probe")
+        probe = await self.llm.embed("probe", purpose="startup.memory_dimension")
         self._vector_size = len(probe)
         if self._vector_size <= 0:
             raise RuntimeError("Embedding vector is empty; check Ollama embedding model")
@@ -74,7 +74,7 @@ class QdrantMemory:
     ) -> str:
         await self.ensure_collection()
         fact_id = str(uuid.uuid4())
-        vector = await self.llm.embed(fact_text)
+        vector = await self.llm.embed(fact_text, purpose="memory.store_fact")
         payload = {
             "fact_id": fact_id,
             "text": fact_text,
@@ -108,7 +108,7 @@ class QdrantMemory:
         if not query.strip():
             return []
         await self.ensure_collection()
-        vector = await self.llm.embed(query)
+        vector = await self.llm.embed(query, purpose="memory.search")
         limit = limit or self.config.search_limit
 
         def _query() -> Any:

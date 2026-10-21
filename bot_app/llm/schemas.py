@@ -8,7 +8,6 @@ ROUTER_SCHEMA = {
         "needs_memory": {"type": "boolean"},
         "needs_tools": {"type": "boolean"},
         "humor_allowed": {"type": "boolean"},
-        "max_reply_length": {"type": "string", "enum": ["very_short", "short", "medium"]},
     },
     "required": [
         "action",
@@ -18,7 +17,6 @@ ROUTER_SCHEMA = {
         "needs_memory",
         "needs_tools",
         "humor_allowed",
-        "max_reply_length",
     ],
 }
 
